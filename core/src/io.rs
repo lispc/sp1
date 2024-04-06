@@ -101,6 +101,12 @@ impl SP1PublicValues {
     }
 }
 
+impl AsRef<[u8]> for SP1PublicValues {
+    fn as_ref(&self) -> &[u8] {
+        &self.buffer.data
+    }
+}
+
 pub mod proof_serde {
     use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 
@@ -142,7 +148,7 @@ pub mod proof_serde {
     mod tests {
         use crate::{
             utils::{setup_logger, tests::FIBONACCI_IO_ELF, BabyBearPoseidon2},
-            SP1ProofWithIO, SP1Prover, SP1Stdin, SP1Verifier,
+            SP1ProofWithIO, SP1Prover, SP1PublicValues, SP1Stdin, SP1Verifier,
         };
 
         /// Tests serialization with a human-readable encoding
@@ -167,6 +173,18 @@ pub mod proof_serde {
             let output =
                 bincode::deserialize::<SP1ProofWithIO<BabyBearPoseidon2>>(&serialized).unwrap();
             SP1Verifier::verify(FIBONACCI_IO_ELF, &output).unwrap();
+        }
+
+        #[test]
+        fn test_public_values_hash() {
+            setup_logger();
+            let mut public_values = SP1PublicValues::new();
+            public_values.write_slice(&[1, 2, 3, 4, 5]);
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&public_values);
+            let hash = hasher.finalize();
+            println!("{:?}", hash);
+            println!("hex: {:?}", hex::encode(hash));
         }
     }
 }
