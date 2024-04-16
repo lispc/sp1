@@ -3,15 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/plonk"
+	cs "github.com/consensys/gnark/constraint/bn254"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/succinctlabs/sp1-recursion-groth16/babybear"
+	"github.com/succinctlabs/sp1-recursion-groth16/unsafekzg"
 )
 
 func TestMain(t *testing.T) {
@@ -56,7 +59,7 @@ func TestMain(t *testing.T) {
 
 	// Compile the circuit.
 	start := time.Now()
-	builder := r1cs.NewBuilder
+	builder := scs.NewBuilder
 	r1cs, err := frontend.Compile(ecc.BN254.ScalarField(), builder, &circuit)
 	if err != nil {
 		t.Fatal(err)
@@ -67,27 +70,57 @@ func TestMain(t *testing.T) {
 
 	// Generate the witness.
 	start = time.Now()
-	assignment, err := frontend.NewWitness(&circuit, ecc.BN254.ScalarField())
+	witnessFull, err := frontend.NewWitness(&circuit, ecc.BN254.ScalarField())
 	if err != nil {
-		t.Fatal(err)
+		log.Fatal(err)
+	}
+
+	witnessPublic, err := frontend.NewWitness(&circuit, ecc.BN254.ScalarField(), frontend.PublicOnly())
+	if err != nil {
+		log.Fatal(err)
 	}
 	elapsed = time.Since(start)
 	fmt.Printf("witness gen took %s\n", elapsed)
 
-	// Run the dummy setup.
-	var pk groth16.ProvingKey
-	pk, err = groth16.DummySetup(r1cs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Generate the proof.
+	// create the necessary data for KZG.
+	// This is a toy example, normally the trusted setup to build ZKG
+	// has been run before.
+	// The size of the data in KZG should be the closest power of 2 bounding //
+	// above max(nbConstraints, nbVariables).
+	ccs := r1cs.(*cs.SparseR1CS)
 	start = time.Now()
-	proof, err := groth16.Prove(r1cs, pk, assignment)
+	srs, _, err := unsafekzg.NewSRS(ccs)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 	elapsed = time.Since(start)
-	fmt.Printf("proving took %s\n", elapsed)
-	fmt.Println(proof)
+	fmt.Printf("src generated take %s\n", elapsed)
+
+	// public data consists of the polynomials describing the constants involved
+	// in the constraints, the polynomial describing the permutation ("grand
+	// product argument"), and the FFT domains.
+	start = time.Now()
+	pk, vk, err := plonk.Setup(ccs, srs)
+	elapsed = time.Since(start)
+	//_, err := plonk.Setup(r1cs, kate, &publicWitness)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("setup done %s\n", elapsed)
+
+	start = time.Now()
+	proof, err := plonk.Prove(ccs, pk, witnessFull)
+	if err != nil {
+		log.Fatal(err)
+	}
+	elapsed = time.Since(start)
+	fmt.Printf("prove done %s\n", elapsed)
+
+	start = time.Now()
+	err = plonk.Verify(proof, vk, witnessPublic)
+	if err != nil {
+		log.Fatal(err)
+	}
+	elapsed = time.Since(start)
+	fmt.Printf("verify done %s\n", elapsed)
 }
